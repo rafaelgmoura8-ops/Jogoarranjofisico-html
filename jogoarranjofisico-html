@@ -1,0 +1,552 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NumPuz de Relações de Fluxo - Versão 9.7 (Arrastar)</title>
+    
+    <style>
+        /* CSS (Ajustado para Drag) */
+        :root {
+            --grid-size: 4;
+            --tile-size: 100px;
+            --puzzle-width: calc(var(--grid-size) * var(--tile-size));
+        }
+
+        body {
+            font-family: 'Helvetica Neue', Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            background-color: #f7f9fc; 
+            color: #333;
+            margin: 0;
+            padding: 20px;
+        }
+
+        h1 {
+            color: #008cba; 
+            margin-bottom: 5px;
+        }
+        
+        #instructions {
+            background-color: #e3f2fd; /* Azul Suave */
+            color: #1976d2;
+            padding: 10px 20px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+            max-width: var(--puzzle-width);
+            text-align: center;
+            border: 1px solid #90caf9;
+        }
+        #instructions strong { color: #0d47a1; }
+
+        #puzzle-container {
+            width: var(--puzzle-width);
+            height: var(--puzzle-width);
+            border: 4px solid #008cba;
+            background-color: #ccc;
+            position: relative;
+            box-shadow: 0 6px 15px rgba(0, 0, 0, 0.3);
+        }
+
+        .tile {
+            width: var(--tile-size);
+            height: var(--tile-size);
+            text-align: center;
+            font-size: 1.1em;
+            font-weight: bold;
+            color: white;
+            background-color: #008cba;
+            border: 1px solid #007399;
+            box-sizing: border-box;
+            position: absolute;
+            /* Remove transição para permitir o arrasto suave */
+            transition: none; 
+            cursor: grab;
+            user-select: none;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 10;
+        }
+        
+        .tile:active {
+            cursor: grabbing;
+            z-index: 11; /* Eleva a peça sendo arrastada */
+        }
+
+        .tile-AP { background-color: #795548; } 
+
+        .tile-empty {
+            background-color: transparent;
+            border: none;
+            cursor: default;
+            z-index: 1; /* Garante que os vazios fiquem por baixo */
+            transition: left 0.2s ease, top 0.2s ease; /* Adiciona transição aos vazios */
+        }
+        
+        .relation-A { background-color: #e53935; } 
+        
+        .tile-id { font-size: 1.4em; margin-bottom: 2px; }
+        .tile-name { font-size: 0.7em; opacity: 0.8; }
+        
+        #controls {
+            margin-top: 20px;
+            display: flex;
+            gap: 15px;
+            align-items: center;
+            width: var(--puzzle-width);
+            justify-content: space-between;
+        }
+
+        #moves-counter {
+            font-size: 1.3em;
+            font-weight: bold;
+            color: #008cba;
+        }
+
+        #proximity-score {
+            font-size: 1.1em;
+            color: #333;
+            padding: 5px 10px;
+            background-color: #fff;
+            border-radius: 4px;
+        }
+
+        #win-message {
+            font-size: 1.5em;
+            font-weight: bold;
+            color: #43a047; 
+        }
+
+        #reset-button {
+            padding: 10px 20px;
+            font-size: 1em;
+            background-color: #008cba;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+
+        #relation-chart {
+            margin-top: 15px;
+            width: var(--puzzle-width);
+            background-color: #fff;
+            padding: 10px;
+            border-radius: 5px;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+        }
+        #relation-chart h3 { margin-top: 0; color: #008cba; }
+        .relation-pair { display: inline-block; padding: 5px 10px; margin: 3px; border-radius: 3px; }
+    </style>
+</head>
+<body>
+    <h1>🔢 NumPuz de Relações de Fluxo - Versão 9.7</h1>
+    <p id="instructions">
+        **NOVO CONTROLE:** **Clique e arraste** um quadrado em direção a um espaço vazio adjacente para deslizar a peça.
+    </p>
+
+    <div id="puzzle-container">
+        </div>
+
+    <div id="controls">
+        <div id="moves-counter">Movimentos: 0</div>
+        <button id="reset-button">Embaralhar Novo</button>
+        <div id="proximity-score">Relações 'A' Conectadas: <span id="a-connections">0</span> / <span id="a-target">0</span></div>
+    </div>
+    
+    <div id="relation-chart">
+        <h3>Dica: Relações 'A' para Conexão (3 pares):</h3>
+        <div id="a-pairs-list"></div>
+    </div>
+    
+    <div id="win-message"></div>
+
+    <script>
+        // JavaScript (Lógica do NumPuz de Relações)
+        
+        const GRID_SIZE = 4;
+        const TILE_SIZE = 100;
+        const PUZZLE_SIZE = GRID_SIZE * GRID_SIZE; 
+        const EMPTY_SPACES_COUNT = 2;
+        const MOVING_TILES_COUNT = PUZZLE_SIZE - EMPTY_SPACES_COUNT; 
+        const DRAG_THRESHOLD = TILE_SIZE * 0.4; // 40% do tamanho do tile para registrar o movimento
+        const puzzleContainer = document.getElementById('puzzle-container');
+        const movesCounter = document.getElementById('moves-counter');
+        const aConnectionsDisplay = document.getElementById('a-connections');
+        const aTargetDisplay = document.getElementById('a-target');
+        const aPairsList = document.getElementById('a-pairs-list');
+        const winMessage = document.getElementById('win-message');
+        const resetButton = document.getElementById('reset-button');
+
+        let tiles = []; 
+        let emptyPositions = []; 
+        let moves = 0;
+        let isSolved = false;
+        
+        let dragInfo = {
+            isDragging: false,
+            startX: 0,
+            startY: 0,
+            originalX: 0,
+            originalY: 0,
+            tileData: null // O objeto de dados do tile que está sendo arrastado
+        };
+        
+        // --- 1. Dados (Mantidos da 9.6) ---
+        const STATION_DATA_MAIN = [
+            { id: 'A', name: 'Estoque Mat. Prima' }, { id: 'B', name: 'Corte e Usinagem' },
+            { id: 'C', name: 'Montagem Final' }, { id: 'D', name: 'Inspeção de Qualidade' },
+            { id: 'E', name: 'Expedição' }, { id: 'F', name: 'Recebimento' },
+            { id: 'G', name: 'Manutenção' }, { id: 'H', name: 'Almoxarifado' },
+            { id: 'I', name: 'Escritório' }, { id: 'J', name: 'Vestiário' },
+            { id: 'K', name: 'Refeitório' }, { id: 'L', name: 'Laboratório' }
+        ];
+
+        const EXTRA_STATIONS = [
+            { id: 'AP1', name: 'Apoio Extra 1' },
+            { id: 'AP2', name: 'Apoio Extra 2' }
+        ];
+        
+        const STATION_DATA = [...STATION_DATA_MAIN, ...EXTRA_STATIONS]; 
+
+        const idMap = STATION_DATA.reduce((acc, data, index) => {
+            acc[data.id] = index;
+            return acc;
+        }, {});
+
+        const RELATION_MATRIX = [
+        //   A   B   C   D   E   F   G   H   I   J   K   L   AP1 AP2
+            ['-', 'U', 'U', 'U', 'U', 'O', 'U', 'U', 'U', 'U', 'U', 'U', 'U', 'U'], // A (0)
+            ['U', '-', 'A', 'U', 'U', 'U', 'U', 'U', 'U', 'U', 'U', 'U', 'U', 'U'], // B (1)
+            ['U', 'A', '-', 'A', 'U', 'U', 'U', 'U', 'U', 'U', 'U', 'U', 'U', 'U'], // C (2)
+            ['U', 'U', 'A', '-', 'U', 'U', 'U', 'U', 'U', 'U', 'U', 'U', 'U', 'U'], // D (3)
+            ['U', 'U', 'U', 'U', '-', 'U', 'U', 'U', 'U', 'U', 'U', 'U', 'U', 'U'], // E (4)
+            ['O', 'U', 'U', 'U', 'U', '-', 'U', 'U', 'U', 'U', 'U', 'U', 'U', 'U'], // F (5)
+            ['U', 'U', 'U', 'U', 'U', 'U', '-', 'U', 'U', 'U', 'U', 'U', 'U', 'U'], // G (6)
+            ['U', 'U', 'U', 'U', 'U', 'U', 'U', '-', 'U', 'U', 'U', 'U', 'U', 'U'], // H (7)
+            ['U', 'U', 'U', 'U', 'U', 'U', 'U', 'U', '-', 'U', 'U', 'U', 'U', 'U'], // I (8)
+            ['U', 'U', 'U', 'U', 'U', 'U', 'U', 'U', 'U', '-', 'A', 'U', 'U', 'U'], // J (9)
+            ['U', 'U', 'U', 'U', 'U', 'U', 'U', 'U', 'U', 'A', '-', 'U', 'U', 'U'], // K (10)
+            ['U', 'U', 'U', 'U', 'U', 'U', 'U', 'U', 'U', 'U', 'U', '-', 'U', 'U'], // L (11)
+            ['U', 'U', 'U', 'U', 'U', 'U', 'U', 'U', 'U', 'U', 'U', 'U', '-', 'U'], // AP1 (12)
+            ['U', 'U', 'U', 'U', 'U', 'U', 'U', 'U', 'U', 'U', 'U', 'U', 'U', '-']  // AP2 (13)
+        ];
+
+
+        // --- 2. Funções de Inicialização e Dicas ---
+
+        function initPuzzle() {
+            puzzleContainer.innerHTML = '';
+            tiles = [];
+            moves = 0;
+            movesCounter.textContent = 'Movimentos: 0';
+            winMessage.textContent = '';
+            isSolved = false;
+            emptyPositions = [];
+            dragInfo = { isDragging: false, startX: 0, startY: 0, originalX: 0, originalY: 0, tileData: null };
+
+
+            // Cria as 14 peças móveis e anexa eventos de drag
+            for (let i = 0; i < MOVING_TILES_COUNT; i++) {
+                const data = STATION_DATA[i];
+                
+                const tile = document.createElement('div');
+                tile.className = `tile ${data.id.startsWith('AP') ? 'tile-AP' : ''}`; 
+                tile.innerHTML = `<span class="tile-id">${data.id}</span><span class="tile-name">${data.name.split(' ')[0]}</span>`;
+                tile.id = `tile-${data.id}`;
+
+                // Adiciona eventos de mouse/toque
+                tile.addEventListener('mousedown', (e) => startDrag(e, tiles[i]));
+                tile.addEventListener('touchstart', (e) => startDrag(e, tiles[i]));
+                
+                tiles.push({
+                    id: data.id,
+                    name: data.name,
+                    correctPos: i,
+                    currentPos: i,
+                    element: tile
+                });
+                puzzleContainer.appendChild(tile);
+            }
+            
+            // Adiciona os 2 espaços vazios
+            for (let i = 0; i < EMPTY_SPACES_COUNT; i++) {
+                const emptyTile = document.createElement('div');
+                emptyTile.className = 'tile tile-empty';
+                emptyTile.id = `tile-empty-${i}`;
+                puzzleContainer.appendChild(emptyTile);
+            }
+
+            positionTiles(false); 
+            
+            setTimeout(() => {
+                shuffleTiles();
+                positionTiles(true); 
+                checkProximityScore();
+            }, 50);
+
+            renderAPairsHint();
+        }
+
+        function renderAPairsHint() {
+            let aPairs = [];
+            for (let i = 0; i < STATION_DATA.length; i++) {
+                for (let j = i + 1; j < STATION_DATA.length; j++) { 
+                    const relation = RELATION_MATRIX[i][j];
+                    if (relation === 'A') {
+                        aPairs.push(`${STATION_DATA[i].id} e ${STATION_DATA[j].id}`);
+                    }
+                }
+            }
+            aPairsList.innerHTML = aPairs.map(pair => 
+                `<span class="relation-pair relation-A">${pair}</span>`
+            ).join('');
+            aTargetDisplay.textContent = aPairs.length;
+            return aPairs.length;
+        }
+
+
+        // --- 3. Lógica de Arrastar e Deslizar ---
+
+        function getClientCoords(e) {
+            // Suporta mouse e touch
+            if (e.touches) return { x: e.touches[0].clientX, y: e.touches[0].clientY };
+            return { x: e.clientX, y: e.clientY };
+        }
+
+        function startDrag(e, tileData) {
+            if (isSolved || dragInfo.isDragging) return;
+            e.preventDefault(); // Previne arrasto nativo em algumas plataformas
+
+            const coords = getClientCoords(e);
+            
+            // Posição visual inicial do tile
+            const initialLeft = parseInt(tileData.element.style.left) || 0;
+            const initialTop = parseInt(tileData.element.style.top) || 0;
+
+            dragInfo = {
+                isDragging: true,
+                startX: coords.x,
+                startY: coords.y,
+                originalX: initialLeft,
+                originalY: initialTop,
+                tileData: tileData
+            };
+
+            // Adiciona listeners globais para rastrear o movimento e o fim do arrasto
+            document.addEventListener('mousemove', onDragMove);
+            document.addEventListener('mouseup', onDragEnd);
+            document.addEventListener('touchmove', onDragMove);
+            document.addEventListener('touchend', onDragEnd);
+        }
+
+        function onDragMove(e) {
+            if (!dragInfo.isDragging) return;
+            e.preventDefault(); // Previne scroll
+            
+            const tileEl = dragInfo.tileData.element;
+            const coords = getClientCoords(e);
+            
+            const dx = coords.x - dragInfo.startX;
+            const dy = coords.y - dragInfo.startY;
+            
+            // Move o elemento visualmente
+            tileEl.style.left = `${dragInfo.originalX + dx}px`;
+            tileEl.style.top = `${dragInfo.originalY + dy}px`;
+        }
+
+        function onDragEnd(e) {
+            if (!dragInfo.isDragging) return;
+            
+            document.removeEventListener('mousemove', onDragMove);
+            document.removeEventListener('mouseup', onDragEnd);
+            document.removeEventListener('touchmove', onDragMove);
+            document.removeEventListener('touchend', onDragEnd);
+
+            const tileData = dragInfo.tileData;
+            const coords = getClientCoords(e);
+            
+            const dx = coords.x - dragInfo.startX;
+            const dy = coords.y - dragInfo.startY;
+            
+            const absDx = Math.abs(dx);
+            const absDy = Math.abs(dy);
+            
+            let moved = false;
+            let targetPos = -1;
+            const currentPos = tileData.currentPos;
+            
+            const r = Math.floor(currentPos / GRID_SIZE);
+            const c = currentPos % GRID_SIZE;
+
+            // 1. Determina a intenção do movimento se o arrasto exceder o limiar
+            if (absDx > DRAG_THRESHOLD && absDx > absDy) {
+                // Movimento horizontal
+                if (dx > 0 && c < GRID_SIZE - 1) { // Direita
+                    targetPos = currentPos + 1;
+                } else if (dx < 0 && c > 0) { // Esquerda
+                    targetPos = currentPos - 1;
+                }
+            } else if (absDy > DRAG_THRESHOLD && absDy > absDx) {
+                // Movimento vertical
+                if (dy > 0 && r < GRID_SIZE - 1) { // Baixo
+                    targetPos = currentPos + GRID_SIZE;
+                } else if (dy < 0 && r > 0) { // Cima
+                    targetPos = currentPos - GRID_SIZE;
+                }
+            }
+            
+            // 2. Tenta finalizar o movimento se houver um alvo válido
+            if (targetPos !== -1) {
+                const emptyIndex = emptyPositions.indexOf(targetPos);
+                
+                if (emptyIndex !== -1) {
+                    // Movimento VÁLIDO: Executa o deslizamento
+                    tileData.currentPos = targetPos;
+                    emptyPositions[emptyIndex] = currentPos;
+                    
+                    moves++;
+                    movesCounter.textContent = `Movimentos: ${moves}`;
+                    checkProximityScore();
+                    moved = true;
+                }
+            }
+
+            // 3. Reposiciona o tile (para a nova posição se moveu, ou para a posição original se não moveu)
+            if (moved) {
+                // Adiciona transição de volta para animar o deslizamento final
+                tileData.element.style.transition = 'left 0.2s ease, top 0.2s ease';
+            } else {
+                 // Reposiciona o tile no lugar original instantaneamente
+                tileData.element.style.transition = 'none';
+            }
+            
+            positionTiles(true); // Reposiciona todos os tiles e vazios
+            
+            // Garante que o CSS transition volte ao estado normal para o próximo drag
+            if (moved) {
+                setTimeout(() => {
+                    tileData.element.style.transition = 'none';
+                }, 200); 
+            }
+            
+            dragInfo.isDragging = false;
+        }
+
+
+        // --- 4. Funções de Layout e Verificação (Mantidas da 9.6) ---
+
+        function positionTiles(animate) {
+            // Reposiciona as 14 peças móveis
+            tiles.forEach((tileData) => {
+                const row = Math.floor(tileData.currentPos / GRID_SIZE);
+                const col = tileData.currentPos % GRID_SIZE;
+                const element = tileData.element;
+                
+                // A animação é controlada diretamente pelo JS/CSS em start/endDrag
+                if (animate) {
+                   // Apenas para o estado inicial/shuffle/final do drag
+                } else {
+                   element.style.transition = 'none'; // Desliga a transição no init
+                }
+                
+                element.style.top = `${row * TILE_SIZE}px`;
+                element.style.left = `${col * TILE_SIZE}px`;
+                
+                if (!animate) {
+                    setTimeout(() => { element.style.transition = 'none'; }, 10);
+                }
+            });
+            
+            // Reposiciona os 2 elementos vazios (DOM)
+            document.querySelectorAll('.tile-empty').forEach((emptyEl, index) => {
+                const pos = emptyPositions[index];
+                const row = Math.floor(pos / GRID_SIZE);
+                const col = pos % GRID_SIZE;
+                emptyEl.style.top = `${row * TILE_SIZE}px`;
+                emptyEl.style.left = `${col * TILE_SIZE}px`;
+            });
+        }
+        
+        function shuffleTiles() {
+            let allPositions = Array.from({length: PUZZLE_SIZE}, (_, i) => i); 
+            for (let i = allPositions.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [allPositions[i], allPositions[j]] = [allPositions[j], allPositions[i]];
+            }
+            emptyPositions = [];
+            let tileIndex = 0;
+            for (let i = 0; i < PUZZLE_SIZE; i++) {
+                const pos = allPositions[i];
+                if (tileIndex < MOVING_TILES_COUNT) {
+                    tiles[tileIndex].currentPos = pos;
+                    tileIndex++;
+                } else {
+                    emptyPositions.push(pos);
+                }
+            }
+        }
+
+        function checkProximityScore() {
+            let connectedAPairs = 0;
+            const targetAPairs = renderAPairsHint(); 
+            
+            for (let i = 0; i < PUZZLE_SIZE; i++) {
+                if (emptyPositions.includes(i)) continue;
+                const currentTileData = tiles.find(t => t.currentPos === i);
+                if (!currentTileData) continue; 
+                const r = Math.floor(i / GRID_SIZE);
+                const c = i % GRID_SIZE;
+                const currentStationIndex = idMap[currentTileData.id];
+
+                const neighborsToCheck = [
+                    { r: r, c: c + 1 }, 
+                    { r: r + 1, c: c }  
+                ];
+
+                neighborsToCheck.forEach(neighbor => {
+                    if (neighbor.r < GRID_SIZE && neighbor.c < GRID_SIZE) {
+                        const neighborIndex = neighbor.r * GRID_SIZE + neighbor.c;
+                        if (emptyPositions.includes(neighborIndex)) return;
+
+                        const neighborTileData = tiles.find(t => t.currentPos === neighborIndex);
+                        if (neighborTileData) {
+                            const neighborStationIndex = idMap[neighborTileData.id];
+                            if (currentStationIndex < STATION_DATA.length && neighborStationIndex < STATION_DATA.length) {
+                                const relation = RELATION_MATRIX[currentStationIndex][neighborStationIndex] || RELATION_MATRIX[neighborStationIndex][currentStationIndex];
+                                
+                                if (relation === 'A') {
+                                    connectedAPairs++;
+                                }
+                            }
+                        }
+                    }
+                });
+            }
+            
+            aConnectionsDisplay.textContent = connectedAPairs;
+
+            if (connectedAPairs === targetAPairs) {
+                isSolved = true;
+                winMessage.textContent = `LAYOUT ÓTIMO ENCONTRADO! Todas as ${targetAPairs} relações 'A' estão adjacentes em ${moves} movimentos! 🏆`;
+            }
+        }
+
+
+        // --- 5. Inicialização ---
+        document.addEventListener('DOMContentLoaded', () => {
+            initPuzzle();
+            resetButton.addEventListener('click', initPuzzle);
+            
+            // Garante que o mouseup/touchend funciona mesmo se sair do container
+            document.addEventListener('mouseup', onDragEnd);
+            document.addEventListener('touchend', onDragEnd);
+        });
+    </script>
+</body>
+</html>
